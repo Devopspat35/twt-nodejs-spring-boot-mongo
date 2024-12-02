@@ -1,102 +1,124 @@
-<!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+const path = require('path')
+const express = require('express')
+const MongoClient = require('mongodb').MongoClient
+const multer = require('multer')
+const { marked } = require('marked')
+const minio = require('minio')
 
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="X-UA-Compatible" content="IE=edge">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+const app = express()
+const port = process.env.PORT || 3000
+const mongoURL = process.env.MONGO_URL || 'mongodb://localhost:27017/dev'
+const minioHost = process.env.MINIO_HOST || 'localhost'
+const minioBucket = 'image-storage'
 
+async function initMongo() {
+  console.log('Initialising MongoDB...')
+  let success = false
+  while (!success) {
+    try {
+      client = await MongoClient.connect(mongoURL, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+      })
+      success = true
+    } catch {
+      console.log('Error connecting to MongoDB, retrying in 1 second')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  }
+  console.log('MongoDB initialised')
+  return client.db(client.s.options.dbName).collection('notes')
+}
 
-<link rel="stylesheet" type="text/css"
-	th:href="@{/webjars/bootstrap/3.3.7/css/bootstrap.min.css}" />
+async function initMinIO() {
+  console.log('Initialising MinIO...')
+  const client = new minio.Client({
+    endPoint: minioHost,
+    port: 9000,
+    useSSL: false,
+    accessKey: process.env.MINIO_ACCESS_KEY,
+    secretKey: process.env.MINIO_SECRET_KEY,
+  })
+  let success = false
+  while (!success) {
+    try {
+      if (!(await client.bucketExists(minioBucket))) {
+        await client.makeBucket(minioBucket)
+      }
+      success = true
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  }
+  console.log('MinIO initialised')
+  return client
+}
 
-<!-- include java script in the footer -->
-<script type="text/javascript"
-	th:src="@{/webjars/jquery/3.2.1/jquery.min.js/}"></script>
-<script type="text/javascript"
-	th:src="@{/webjars/bootstrap/3.3.7/js/bootstrap.min.js}"></script>
+async function start() {
+  const db = await initMongo()
+  const minio = await initMinIO()
 
-<title>Spring Boot APP with MongoDB </title>
-</head>
-<body>
-	<div class="container">
-		<h1 class="text-center">SpringBootApp + MongoDB with Jenkins, Docker and K8S</h1>
-		<div class="col-md-6">
-			<form name="saveUser" action="/save" method="post"
-				class="form-horizontal">
-				<div class="form-group">
-					<label for="firstName">First Name:</label> <input type="text"
-						id="firstName" class="form-control" placeholder="First Name"
-						name="firstName" />
-				</div>
+  app.set('view engine', 'pug')
+  app.set('views', path.join(__dirname, 'views'))
+  app.use(express.static(path.join(__dirname, 'public')))
 
-				<div class="form-group">
-					<label for="lastName">Last Name:</label> <input type="text"
-						id="lastName" class="form-control" placeholder="Last Name"
-						name="lastName">
-				</div>
+  app.get('/', async (req, res) => {
+    res.render('index', { notes: await retrieveNotes(db) })
+  })
 
-				<div class="form-group">
-					<label for="email">Email:</label> <input type="email" id="email"
-						class="form-control" placeholder="Email" name="email">
-				</div>
-				<div class="form-group">
-					<button type="submit" class="btn btn-default">Submit</button>
-				</div>
-			</form>
-		</div>
+  app.post(
+    '/note',
+    multer({ storage: multer.memoryStorage() }).single('image'),
+    async (req, res) => {
+      if (!req.body.upload && req.body.description) {
+        await saveNote(db, { description: req.body.description })
+        res.redirect('/')
+      } else if (req.body.upload && req.file) {
+        await minio.putObject(
+          minioBucket,
+          req.file.originalname,
+          req.file.buffer,
+        )
+        const link = `/img/${encodeURIComponent(req.file.originalname)}`
+        res.render('index', {
+          content: `${req.body.description} ![](${link})`,
+          notes: await retrieveNotes(db),
+        })
+      }
+    },
+  )
 
+  app.get('/img/:name', async (req, res) => {
+    const stream = await minio.getObject(
+      minioBucket,
+      decodeURIComponent(req.params.name),
+    )
+    stream.pipe(res)
+  })
 
-		<div class="col-md-12">
-			<h2>Saved Users</h2>
-			<table id="usersTable" class="table table-striped">
-				<thead>
-					<tr>
-						<th>ID</th>
-						<th>First Name</th>
-						<th>Last Name</th>
-						<th>Email</th>
-					</tr>
-				</thead>
-				<tbody>
-				</tbody>
-			</table>
-		</div>
+  app.listen(port, () => {
+    console.log(`App listening on http://localhost:${port}`)
+  })
+}
 
+async function saveNote(db, note) {
+  await db.insertOne(note)
+}
 
-		<div class="row-md-8">
+async function retrieveNotes(db) {
+  const notes = await db.find().toArray()
+  const sortedNotes = notes.reverse()
+  return sortedNotes.map(it => ({ ...it, description: marked(it.description) }))
+}
+<div class="row-md-8">
 			<div class="col-md-3">
 				<img th:src="@{/img/twt-logo2.jpg}" alt="twtech-logo1.jpg" height="200">
 			</div>
 			<div class="col-md-8">
-				<h4 class="text-center">Think-with-Tech - is always ready to share experience in the field of DevSecOps, troubleshooting and end-to-end multi-tier Automation.</h4>
+				<h4 class="text-center">Think-with-Tech - We share experience in the fields of DevSecOps, troubleshooting and end-to-end multi-tier Deployment for java,nodejs and DotNet applications.</h4>
 				<h3 class="text-center">Tel
 					+1 220 219 9866, twtech-email: patpaddy38@gmail.com</h3>
 				<h5 class="text-center">
 					Authored: December. 2024 by: <a> Pat.a.Foncha </a>
 				</h5>
-			</div>
-		</div>
-
-	</div>
-
-	<script>
-		$.ajax({
-			url : "/api/users",
-
-			success : function(response) {
-				$.each(response, function(i, item) {
-					var row = $("<tr />");
-					$("#usersTable").append(row);
-
-					row.append($("<td>" + item.id + "</td>"));
-					row.append($("<td>" + item.firstName + "</td>"));
-					row.append($("<td>" + item.lastName + "</td>"));
-					row.append($("<td>" + item.email + "</td>"));
-
-				});
-			}
-		})
-	</script>
-</body>
-</html>
+start()
