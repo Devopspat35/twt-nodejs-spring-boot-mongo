@@ -4,7 +4,7 @@ We can deploy this application in working kubernetes cluster using kubectl comma
 
 Frontend:
 
-kubectl apply -f knote.yaml
+kubectl apply -f twtech.yaml
 
 Backend:
 
