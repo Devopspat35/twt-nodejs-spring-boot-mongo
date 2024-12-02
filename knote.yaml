@@ -2,21 +2,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: knote
+  name: twtechapp
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: knote
+      app: twtech
       tier: frontend
   template:
     metadata:
       labels:
-        app: knote
+        app: twtech
         tier: frontend
     spec:
       containers:
-        - name: app
+        - name: twtech
           image: learnitguide/knotejs:1.0
           ports:
             - containerPort: 3000
@@ -28,10 +28,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: knote
+  name: twtechappsvc
 spec:
   selector:
-    app: knote
+    app: twtech
     tier: frontend
 
   ports:
